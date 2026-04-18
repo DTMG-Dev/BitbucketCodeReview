@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: bitbucket-code-review
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter          # upgrade to standard/pro for production load
+    region: singapore      # change to: oregon | frankfurt | ohio | virginia
+    branch: master
+
+    healthCheckPath: /health/live
+
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+
+      # ── Bitbucket ─────────────────────────────────────────────────────────
+      - key: Bitbucket__Email
+        sync: false        # Render will prompt you to enter this in the dashboard
+
+      - key: Bitbucket__ApiToken
+        sync: false
+
+      - key: Bitbucket__WebhookSecret
+        sync: false
+
+      # ── Anthropic ─────────────────────────────────────────────────────────
+      - key: Anthropic__ApiKey
+        sync: false
+
+      - key: Anthropic__Model
+        value: claude-opus-4-6
