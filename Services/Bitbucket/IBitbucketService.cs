@@ -32,4 +32,7 @@ public interface IBitbucketService
         int pullRequestId,
         string markdownBody,
         CancellationToken ct = default);
+
+    /// <summary>Lightweight connectivity check — returns true if the API token is valid.</summary>
+    Task<bool> PingAsync(CancellationToken ct = default);
 }

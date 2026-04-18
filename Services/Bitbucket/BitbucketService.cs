@@ -130,6 +130,12 @@ public sealed class BitbucketService : IBitbucketService
         _logger.LogInformation("Summary comment posted to PR #{PrId}", pullRequestId);
     }
 
+    public async Task<bool> PingAsync(CancellationToken ct = default)
+    {
+        var response = await _http.GetAsync("user", ct);
+        return response.IsSuccessStatusCode;
+    }
+
     // ── Core POST helper with full logging ────────────────────────────────────
 
     private async Task PostAsync(string url, string json, CancellationToken ct)
