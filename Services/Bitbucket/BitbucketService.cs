@@ -73,7 +73,7 @@ public sealed class BitbucketService : IBitbucketService
         };
 
         var payload = new InlineCommentRequest(
-            Content: new($"{icon} **{comment.Severity}: {comment.Issue}**\n\n{comment.Suggestion}"),
+            Content: new($"{icon} **{comment.Issue}** — {comment.Suggestion}"),
             Inline:  new(To: comment.LineNumber, Path: comment.FilePath));
 
         await PostAsync(url, JsonSerializer.Serialize(payload, JsonOpts), ct);

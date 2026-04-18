@@ -73,7 +73,7 @@ The JSON must match this exact schema:
       "lineNumber": 42,
       "severity": "Error",
       "issue": "Short title of the issue (max 60 chars)",
-      "suggestion": "Detailed explanation of the problem and how to fix it."
+      "suggestion": "One sentence: what is wrong and how to fix it."
     }
   ]
 }
@@ -84,5 +84,6 @@ The JSON must match this exact schema:
 - `lineNumber` must be the **new-file line number** of the changed line that caused the issue (1-based)
 - Only reference line numbers of `+` lines from the diff above — never reference removed (`-`) lines
 - If the file looks good and has no issues, return an empty `comments` array
-- Keep `suggestion` concise but actionable (2–4 sentences max)
+- `suggestion` must be **one sentence only** — what is wrong and the fix. No preamble, no examples, no multi-line explanations.
+- `summary` must be **one sentence** — overall verdict on this file's changes.
 - Do not hallucinate issues that are not visible in the diff
