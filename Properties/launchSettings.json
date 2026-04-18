@@ -2,11 +2,13 @@
   "profiles": {
     "BitbucketCodeReview": {
       "commandName": "Project",
+      "dotnetRunMessages": true,
       "launchBrowser": true,
+      "launchUrl": "health",
+      "applicationUrl": "http://localhost:5050",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
-      },
-      "applicationUrl": "https://localhost:60522;http://localhost:60523"
+      }
     }
   }
 }

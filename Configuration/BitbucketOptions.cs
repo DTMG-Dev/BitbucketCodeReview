@@ -7,11 +7,11 @@ public sealed class BitbucketOptions
     /// <summary>Bitbucket Cloud base URL. Rarely needs changing.</summary>
     public string BaseUrl { get; set; } = "https://api.bitbucket.org/2.0";
 
-    /// <summary>Bitbucket account username (used for Basic auth).</summary>
-    public string Username { get; set; } = string.Empty;
+    /// <summary>Atlassian account email address (used as username in Basic auth).</summary>
+    public string Email { get; set; } = string.Empty;
 
-    /// <summary>Bitbucket App Password (Basic auth credential).</summary>
-    public string AppPassword { get; set; } = string.Empty;
+    /// <summary>Atlassian API Token — generate at id.atlassian.com → Security → API Tokens.</summary>
+    public string ApiToken { get; set; } = string.Empty;
 
     /// <summary>
     /// Shared secret configured in the Bitbucket webhook settings.

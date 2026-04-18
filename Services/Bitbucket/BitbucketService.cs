@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using BitbucketCodeReview.Configuration;
@@ -8,20 +7,15 @@ using Microsoft.Extensions.Options;
 
 namespace BitbucketCodeReview.Services.Bitbucket;
 
-/// <summary>
-/// Wraps the Bitbucket Cloud REST API v2.0 for diff retrieval and comment posting.
-/// Authentication uses HTTP Basic Auth (username + App Password).
-/// </summary>
 public sealed class BitbucketService : IBitbucketService
 {
     private readonly HttpClient _http;
-    private readonly BitbucketOptions _options;
     private readonly ILogger<BitbucketService> _logger;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
-        PropertyNamingPolicy        = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition      = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        PropertyNamingPolicy   = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
     public BitbucketService(
@@ -29,18 +23,12 @@ public sealed class BitbucketService : IBitbucketService
         IOptions<BitbucketOptions> options,
         ILogger<BitbucketService> logger)
     {
-        _http    = http;
-        _options = options.Value;
-        _logger  = logger;
+        _http   = http;
+        _logger = logger;
 
-        // Basic auth header
-        var credentials = Convert.ToBase64String(
-            Encoding.ASCII.GetBytes($"{_options.Username}:{_options.AppPassword}"));
+        _http.BaseAddress = new Uri(options.Value.BaseUrl.TrimEnd('/') + "/");
 
-        _http.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Basic", credentials);
-
-        _http.BaseAddress = new Uri(_options.BaseUrl.TrimEnd('/') + "/");
+        _logger.LogInformation("BitbucketService base URL: {BaseUrl}", _http.BaseAddress);
     }
 
     // ── Diff ──────────────────────────────────────────────────────────────────
@@ -53,22 +41,44 @@ public sealed class BitbucketService : IBitbucketService
     {
         var url = $"repositories/{workspace}/{repoSlug}/pullrequests/{pullRequestId}/diff";
 
-        _logger.LogInformation(
-            "Fetching diff for PR #{PrId} in {Workspace}/{Repo}",
-            pullRequestId, workspace, repoSlug);
+        _logger.LogInformation("GET {Url}", url);
 
-        var response = await _http.GetAsync(url, ct);
+        // Bitbucket's /diff endpoint redirects to a CDN URL.
+        // HttpClient follows the redirect but the DelegatingHandler does NOT run again,
+        // so the auth header is lost. We follow redirects manually to preserve auth.
+        var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+
+        _logger.LogInformation("GET {Url} → {Status}", url, response.StatusCode);
+
+        // Follow up to 5 redirects manually, re-attaching auth each time
+        int redirects = 0;
+        while (response.StatusCode is System.Net.HttpStatusCode.Moved
+                                   or System.Net.HttpStatusCode.Found
+                                   or System.Net.HttpStatusCode.TemporaryRedirect
+                                   or System.Net.HttpStatusCode.PermanentRedirect
+               && redirects++ < 5)
+        {
+            var location = response.Headers.Location
+                ?? throw new InvalidOperationException("Redirect with no Location header.");
+
+            _logger.LogInformation("Following redirect → {Location}", location);
+
+            var redirectRequest = new HttpRequestMessage(HttpMethod.Get, location);
+            response = await _http.SendAsync(redirectRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            _logger.LogInformation("Redirect {Location} → {Status}", location, response.StatusCode);
+        }
+
+        var body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
         {
-            var body = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogError(
-                "Bitbucket diff API returned {Status}: {Body}",
-                response.StatusCode, body);
-            response.EnsureSuccessStatusCode(); // throw
+            _logger.LogError("Diff fetch failed ({Status}). Body: {Body}", response.StatusCode, body);
+            response.EnsureSuccessStatusCode();
         }
 
-        return await response.Content.ReadAsStringAsync(ct);
+        _logger.LogInformation("Diff fetched — {Length} chars", body.Length);
+        return body;
     }
 
     // ── Comments ──────────────────────────────────────────────────────────────
@@ -89,23 +99,19 @@ public sealed class BitbucketService : IBitbucketService
             _                      => "🔵"
         };
 
-        var body = $"{severityIcon} **{comment.Severity}: {comment.Issue}**\n\n{comment.Suggestion}";
+        var commentBody = $"{severityIcon} **{comment.Severity}: {comment.Issue}**\n\n{comment.Suggestion}";
 
         var payload = new InlineCommentRequest
         {
-            Content = new CommentContent { Raw = body },
-            Inline  = new InlinePosition
-            {
-                To   = comment.LineNumber,
-                Path = comment.FilePath
-            }
+            Content = new CommentContent { Raw = commentBody },
+            Inline  = new InlinePosition { To = comment.LineNumber, Path = comment.FilePath }
         };
 
-        await PostCommentAsync(url, payload, ct);
+        await PostAsync(url, JsonSerializer.Serialize(payload, JsonOpts), ct);
 
         _logger.LogInformation(
-            "Posted {Severity} comment on {File}:{Line}",
-            comment.Severity, comment.FilePath, comment.LineNumber);
+            "Inline comment posted → {File}:{Line} [{Severity}]",
+            comment.FilePath, comment.LineNumber, comment.Severity);
     }
 
     public async Task PostSummaryCommentAsync(
@@ -115,37 +121,37 @@ public sealed class BitbucketService : IBitbucketService
         string markdownBody,
         CancellationToken ct = default)
     {
-        var url = $"repositories/{workspace}/{repoSlug}/pullrequests/{pullRequestId}/comments";
-
+        var url     = $"repositories/{workspace}/{repoSlug}/pullrequests/{pullRequestId}/comments";
         var payload = new { content = new { raw = markdownBody } };
         var json    = JsonSerializer.Serialize(payload, JsonOpts);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await _http.PostAsync(url, content, ct);
+        await PostAsync(url, json, ct);
 
-        if (!response.IsSuccessStatusCode)
-        {
-            var responseBody = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogError("Failed to post summary comment: {Status} {Body}",
-                response.StatusCode, responseBody);
-        }
+        _logger.LogInformation("Summary comment posted to PR #{PrId}", pullRequestId);
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // ── Core POST helper with full logging ────────────────────────────────────
 
-    private async Task PostCommentAsync(string url, InlineCommentRequest payload, CancellationToken ct)
+    private async Task PostAsync(string url, string json, CancellationToken ct)
     {
-        var json    = JsonSerializer.Serialize(payload, JsonOpts);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        _logger.LogDebug("POST {Url} | Body: {Json}", url, json);
 
+        var content  = new StringContent(json, Encoding.UTF8, "application/json");
         var response = await _http.PostAsync(url, content, ct);
+        var body     = await response.Content.ReadAsStringAsync(ct);
 
-        if (!response.IsSuccessStatusCode)
+        if (response.IsSuccessStatusCode)
         {
-            var body = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogInformation("POST {Url} → {Status} ✓", url, response.StatusCode);
+        }
+        else
+        {
             _logger.LogError(
-                "Bitbucket comment API returned {Status}: {Body}",
-                response.StatusCode, body);
+                "POST {Url} → {Status} ✗\nRequest JSON: {Json}\nResponse: {Body}",
+                url, response.StatusCode, json, body);
+
+            throw new HttpRequestException(
+                $"Bitbucket API {url} returned {(int)response.StatusCode}: {body}");
         }
     }
 }

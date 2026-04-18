@@ -17,18 +17,18 @@ public sealed class WebhookController : ControllerBase
     private static readonly HashSet<string> SupportedEvents =
         ["pullrequest:created", "pullrequest:updated"];
 
-    private readonly ICodeReviewService _reviewService;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly BitbucketOptions _options;
     private readonly ILogger<WebhookController> _logger;
 
     public WebhookController(
-        ICodeReviewService reviewService,
+        IServiceScopeFactory scopeFactory,
         IOptions<BitbucketOptions> options,
         ILogger<WebhookController> logger)
     {
-        _reviewService = reviewService;
-        _options       = options.Value;
-        _logger        = logger;
+        _scopeFactory = scopeFactory;
+        _options      = options.Value;
+        _logger       = logger;
     }
 
     /// <summary>
@@ -37,11 +37,13 @@ public sealed class WebhookController : ControllerBase
     /// Triggers: Pull Request Created, Pull Request Updated
     /// </summary>
     [HttpPost("pullrequest")]
-    public async Task<IActionResult> ReceivePullRequestEvent(CancellationToken ct)
+    public async Task<IActionResult> ReceivePullRequestEvent()
     {
         // ── 1. Read raw body (needed for signature validation) ────────────────
+        // CancellationToken.None: Bitbucket closes the connection immediately after
+        // sending, which cancels the request token before we finish reading.
         Request.EnableBuffering();
-        var rawBody = await ReadBodyAsync(ct);
+        var rawBody = await ReadBodyAsync();
 
         // ── 2. Validate webhook signature if a secret is configured ───────────
         if (!string.IsNullOrWhiteSpace(_options.WebhookSecret))
@@ -87,9 +89,17 @@ public sealed class WebhookController : ControllerBase
         // ── 5. Kick off review asynchronously (don't block Bitbucket's timeout) ──
         _ = Task.Run(async () =>
         {
-            using var scope = HttpContext.RequestServices.CreateScope();
-            var reviewService = scope.ServiceProvider.GetRequiredService<ICodeReviewService>();
-            await reviewService.ReviewPullRequestAsync(payload, CancellationToken.None);
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var reviewService = scope.ServiceProvider.GetRequiredService<ICodeReviewService>();
+                await reviewService.ReviewPullRequestAsync(payload, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Unhandled exception in background review for PR #{PrId}", payload.PullRequest.Id);
+            }
         }, CancellationToken.None);
 
         return Accepted(new
@@ -103,11 +113,11 @@ public sealed class WebhookController : ControllerBase
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private async Task<string> ReadBodyAsync(CancellationToken ct)
+    private async Task<string> ReadBodyAsync()
     {
         Request.Body.Position = 0;
         using var reader = new StreamReader(Request.Body, Encoding.UTF8, leaveOpen: true);
-        var body = await reader.ReadToEndAsync(ct);
+        var body = await reader.ReadToEndAsync(CancellationToken.None);
         Request.Body.Position = 0;
         return body;
     }

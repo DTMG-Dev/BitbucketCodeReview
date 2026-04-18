@@ -33,8 +33,16 @@ try
         builder.Configuration.GetSection(AnthropicOptions.SectionName));
 
     // ── HTTP Clients ──────────────────────────────────────────────────────────
+    builder.Services.AddTransient<BitbucketAuthHandler>();
     builder.Services.AddHttpClient<IBitbucketService, BitbucketService>()
-        .SetHandlerLifetime(TimeSpan.FromMinutes(5));
+        .SetHandlerLifetime(TimeSpan.FromMinutes(5))
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            // Disable auto-redirect so we can re-attach the auth header on each hop.
+            // Bitbucket's /diff endpoint redirects to a CDN URL which needs auth too.
+            AllowAutoRedirect = false
+        })
+        .AddHttpMessageHandler<BitbucketAuthHandler>();
 
     // AnthropicAuthHandler injects x-api-key + anthropic-version on every request.
     builder.Services.AddTransient<AnthropicAuthHandler>();
@@ -55,7 +63,9 @@ try
     if (app.Environment.IsDevelopment())
         app.MapOpenApi();
 
-    app.UseHttpsRedirection();
+    if (!app.Environment.IsDevelopment())
+        app.UseHttpsRedirection();
+
     app.UseSerilogRequestLogging();
     app.MapControllers();
 
