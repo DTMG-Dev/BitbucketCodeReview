@@ -1,4 +1,5 @@
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using BitbucketCodeReview.Configuration;
 using BitbucketCodeReview.HealthChecks;
 using BitbucketCodeReview.Infrastructure;
@@ -46,41 +47,36 @@ try
             AllowAutoRedirect = false   // we follow redirects manually to preserve auth
         })
         .AddHttpMessageHandler<BitbucketAuthHandler>()
-        .AddResilienceHandler("bitbucket", pipeline =>
+        .AddStandardResilienceHandler()
+        .Configure(options =>
         {
             // Retry up to 3 times with exponential back-off for transient errors
-            pipeline.AddRetry(new HttpRetryStrategyOptions
-            {
-                MaxRetryAttempts = 3,
-                Delay            = TimeSpan.FromSeconds(2),
-                BackoffType      = DelayBackoffType.Exponential,
-                UseJitter        = true
-            });
-            // Circuit breaker: open after 5 failures, reset after 30 s
-            pipeline.AddCircuitBreaker(new HttpCircuitBreakerStrategyOptions
-            {
-                FailureRatio            = 0.5,
-                SamplingDuration        = TimeSpan.FromSeconds(30),
-                MinimumThroughput       = 5,
-                BreakDuration           = TimeSpan.FromSeconds(30)
-            });
-            pipeline.AddTimeout(TimeSpan.FromSeconds(30));
+            options.Retry.MaxRetryAttempts = 3;
+            options.Retry.Delay            = TimeSpan.FromSeconds(2);
+            options.Retry.UseJitter        = true;
+            // Circuit breaker: open after 50% failure rate within 30 s window
+            options.CircuitBreaker.SamplingDuration        = TimeSpan.FromSeconds(30);
+            options.CircuitBreaker.MinimumThroughput       = 5;
+            options.CircuitBreaker.BreakDuration           = TimeSpan.FromSeconds(30);
+            // Total timeout per attempt (including retries)
+            options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
         });
 
     builder.Services.AddTransient<AnthropicAuthHandler>();
     builder.Services.AddHttpClient<IAnthropicService, AnthropicService>()
         .AddHttpMessageHandler<AnthropicAuthHandler>()
-        .AddResilienceHandler("anthropic", pipeline =>
+        .AddStandardResilienceHandler()
+        .Configure(options =>
         {
             // Fewer retries — Claude calls are expensive and slow
-            pipeline.AddRetry(new HttpRetryStrategyOptions
-            {
-                MaxRetryAttempts = 2,
-                Delay            = TimeSpan.FromSeconds(5),
-                BackoffType      = DelayBackoffType.Exponential,
-                UseJitter        = true
-            });
-            pipeline.AddTimeout(TimeSpan.FromSeconds(120)); // Claude can be slow
+            options.Retry.MaxRetryAttempts = 2;
+            options.Retry.Delay            = TimeSpan.FromSeconds(5);
+            options.Retry.UseJitter        = true;
+            // Claude can be very slow — generous timeouts
+            options.TotalRequestTimeout.Timeout      = TimeSpan.FromSeconds(120);
+            options.AttemptTimeout.Timeout           = TimeSpan.FromSeconds(110);
+            // SamplingDuration must be >= 2× AttemptTimeout (220s minimum)
+            options.CircuitBreaker.SamplingDuration  = TimeSpan.FromSeconds(240);
         });
 
     // ── Application services ──────────────────────────────────────────────────
