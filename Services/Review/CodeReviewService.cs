@@ -1,5 +1,6 @@
 using System.Text;
 using BitbucketCodeReview.Configuration;
+using BitbucketCodeReview.Infrastructure;
 using BitbucketCodeReview.Models.Bitbucket;
 using BitbucketCodeReview.Models.Review;
 using BitbucketCodeReview.Services.Anthropic;
@@ -18,6 +19,7 @@ public sealed class CodeReviewService : ICodeReviewService
     private readonly IBitbucketService _bitbucket;
     private readonly IAnthropicService _anthropic;
     private readonly IDiffParserService _diffParser;
+    private readonly BranchFilter _branchFilter;
     private readonly BitbucketOptions _bbOptions;
     private readonly ILogger<CodeReviewService> _logger;
 
@@ -25,14 +27,16 @@ public sealed class CodeReviewService : ICodeReviewService
         IBitbucketService bitbucket,
         IAnthropicService anthropic,
         IDiffParserService diffParser,
+        BranchFilter branchFilter,
         IOptions<BitbucketOptions> bbOptions,
         ILogger<CodeReviewService> logger)
     {
-        _bitbucket  = bitbucket;
-        _anthropic  = anthropic;
-        _diffParser = diffParser;
-        _bbOptions  = bbOptions.Value;
-        _logger     = logger;
+        _bitbucket     = bitbucket;
+        _anthropic     = anthropic;
+        _diffParser    = diffParser;
+        _branchFilter  = branchFilter;
+        _bbOptions     = bbOptions.Value;
+        _logger        = logger;
     }
 
     public async Task ReviewPullRequestAsync(WebhookPayload payload, CancellationToken ct = default)
@@ -54,6 +58,11 @@ public sealed class CodeReviewService : ICodeReviewService
                 payload.Repository.FullName);
             return;
         }
+
+        // ── Branch policy check ───────────────────────────────────────────────
+        // Check BEFORE posting any comment — don't spam PRs that aren't in scope.
+        if (!_branchFilter.ShouldReview(pr))
+            return;
 
         // Post immediately so we know Bitbucket connectivity works
         await _bitbucket.PostSummaryCommentAsync(workspace, repoSlug, prId,

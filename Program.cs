@@ -35,6 +35,8 @@ try
         builder.Configuration.GetSection(BitbucketOptions.SectionName));
     builder.Services.Configure<AnthropicOptions>(
         builder.Configuration.GetSection(AnthropicOptions.SectionName));
+    builder.Services.Configure<ReviewPolicyOptions>(
+        builder.Configuration.GetSection(ReviewPolicyOptions.SectionName));
 
     // ── HTTP Clients with resilience ──────────────────────────────────────────
     builder.Services.AddTransient<BitbucketAuthHandler>();
@@ -85,6 +87,7 @@ try
     builder.Services.AddSingleton<IDiffParserService, DiffParserService>();
     builder.Services.AddSingleton<ReviewQueue>();
     builder.Services.AddSingleton<DuplicateReviewFilter>();
+    builder.Services.AddSingleton<BranchFilter>();
     builder.Services.AddScoped<ICodeReviewService, CodeReviewService>();
     builder.Services.AddHostedService<ReviewWorker>();
     builder.Services.AddMemoryCache();
