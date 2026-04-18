@@ -130,6 +130,48 @@ public sealed class BitbucketService : IBitbucketService
         _logger.LogInformation("Summary comment posted to PR #{PrId}", pullRequestId);
     }
 
+    // ── Repository file fetch ─────────────────────────────────────────────────
+
+    public async Task<string?> GetRepositoryFileAsync(
+        string workspace,
+        string repoSlug,
+        string branch,
+        string filePath,
+        CancellationToken ct = default)
+    {
+        // Bitbucket src API: GET /2.0/repositories/{workspace}/{slug}/src/{node}/{path}
+        // {node} can be a branch name; returns the raw file content directly.
+        var url = $"repositories/{workspace}/{repoSlug}/src/{Uri.EscapeDataString(branch)}/{filePath}";
+
+        _logger.LogInformation("Fetching repo file: GET {Url}", url);
+
+        var response = await _http.GetAsync(url, ct);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _logger.LogInformation(
+                "'{FilePath}' not found in '{Branch}' — no repo-specific guidelines will be used.",
+                filePath, branch);
+            return null;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning(
+                "Could not fetch '{FilePath}' from '{Branch}': {Status} — skipping guidelines.",
+                filePath, branch, response.StatusCode);
+            return null;
+        }
+
+        _logger.LogInformation(
+            "Fetched '{FilePath}' from '{Branch}' — {Length} chars",
+            filePath, branch, body.Length);
+
+        return body;
+    }
+
     public async Task<bool> PingAsync(CancellationToken ct = default)
     {
         var response = await _http.GetAsync("user", ct);

@@ -13,6 +13,14 @@ security, performance, and maintainability.
 
 **File being reviewed:** `{{FILE_PATH}}`
 
+## Repository-Specific Guidelines
+
+The following rules come from `CODE_REVIEW_GUIDELINES.md` in this repository.
+**Treat these as the PRIMARY rules** — they override or extend the defaults below.
+If no guidelines are provided, fall back to the default criteria only.
+
+{{GUIDELINES}}
+
 ## Diff to Review
 
 ```diff

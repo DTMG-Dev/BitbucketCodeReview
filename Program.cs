@@ -84,6 +84,7 @@ try
     builder.Services.AddSingleton<ReviewQueue>();
     builder.Services.AddSingleton<DuplicateReviewFilter>();
     builder.Services.AddSingleton<BranchFilter>();
+    builder.Services.AddSingleton<TechStackDetector>();
     builder.Services.AddScoped<ICodeReviewService, CodeReviewService>();
     builder.Services.AddHostedService<ReviewWorker>();
     builder.Services.AddMemoryCache();

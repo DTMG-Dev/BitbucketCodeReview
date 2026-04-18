@@ -29,4 +29,11 @@ public sealed class BitbucketOptions
 
     /// <summary>Maximum diff size in characters per file sent to Claude.</summary>
     public int MaxDiffCharsPerFile { get; set; } = 12_000;
+
+    /// <summary>
+    /// Name of the per-repository review guidelines file fetched from the target branch.
+    /// When found, its content is injected into the Claude prompt as additional review rules.
+    /// Set to empty string to disable this feature.
+    /// </summary>
+    public string GuidelinesFileName { get; set; } = "CODE_REVIEW_GUIDELINES.md";
 }

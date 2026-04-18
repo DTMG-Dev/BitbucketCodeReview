@@ -20,6 +20,7 @@ public sealed class CodeReviewService : ICodeReviewService
     private readonly IAnthropicService _anthropic;
     private readonly IDiffParserService _diffParser;
     private readonly BranchFilter _branchFilter;
+    private readonly TechStackDetector _techStackDetector;
     private readonly BitbucketOptions _bbOptions;
     private readonly ILogger<CodeReviewService> _logger;
 
@@ -28,15 +29,17 @@ public sealed class CodeReviewService : ICodeReviewService
         IAnthropicService anthropic,
         IDiffParserService diffParser,
         BranchFilter branchFilter,
+        TechStackDetector techStackDetector,
         IOptions<BitbucketOptions> bbOptions,
         ILogger<CodeReviewService> logger)
     {
-        _bitbucket     = bitbucket;
-        _anthropic     = anthropic;
-        _diffParser    = diffParser;
-        _branchFilter  = branchFilter;
-        _bbOptions     = bbOptions.Value;
-        _logger        = logger;
+        _bitbucket          = bitbucket;
+        _anthropic          = anthropic;
+        _diffParser         = diffParser;
+        _branchFilter       = branchFilter;
+        _techStackDetector  = techStackDetector;
+        _bbOptions          = bbOptions.Value;
+        _logger             = logger;
     }
 
     public async Task ReviewPullRequestAsync(WebhookPayload payload, CancellationToken ct = default)
@@ -69,7 +72,42 @@ public sealed class CodeReviewService : ICodeReviewService
             "🤖 **AI Code Review started** — analysing changed files, comments will appear shortly.",
             ct);
 
-        // 1. Fetch the raw diff
+        // 1. Fetch per-repo review guidelines from the target branch (best-effort)
+        //    Fallback: auto-detect tech stack from the diff and inject stack-specific rules.
+        var targetBranch = pr.Destination.Branch.Name;
+        string? guidelines = null;
+        bool usingRepoGuidelines = false;
+
+        if (!string.IsNullOrWhiteSpace(_bbOptions.GuidelinesFileName))
+        {
+            try
+            {
+                guidelines = await _bitbucket.GetRepositoryFileAsync(
+                    workspace, repoSlug, targetBranch, _bbOptions.GuidelinesFileName, ct);
+
+                if (guidelines is not null)
+                {
+                    usingRepoGuidelines = true;
+                    _logger.LogInformation(
+                        "Loaded '{GuidelinesFile}' from '{Branch}' — repo-specific rules will be applied.",
+                        _bbOptions.GuidelinesFileName, targetBranch);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "No '{GuidelinesFile}' in '{Branch}' — will fall back to tech-stack detection.",
+                        _bbOptions.GuidelinesFileName, targetBranch);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to fetch '{GuidelinesFile}' — will fall back to tech-stack detection.",
+                    _bbOptions.GuidelinesFileName);
+            }
+        }
+
+        // 2. Fetch the raw diff
         string rawDiff;
         try
         {
@@ -81,12 +119,12 @@ public sealed class CodeReviewService : ICodeReviewService
             return;
         }
 
-        // 2. Parse the diff into files
+        // 3. Parse the diff into files
         var files = _diffParser.Parse(rawDiff);
 
         _logger.LogInformation("Diff contains {FileCount} changed files", files.Count);
 
-        // 3. Filter to reviewable file types and size limits
+        // 4. Filter to reviewable file types and size limits
         var reviewable = files
             .Where(f => !f.IsDeleted)
             .Where(f => IsReviewableExtension(f.FilePath))
@@ -101,7 +139,12 @@ public sealed class CodeReviewService : ICodeReviewService
 
         _logger.LogInformation("{Count} files will be sent for review", reviewable.Count);
 
-        // 4. Review each file in sequence (avoids rate-limit bursts)
+        // 4b. Apply tech-stack fallback if no repo guidelines were found.
+        //     We do this after filtering so we only look at reviewable files.
+        if (!usingRepoGuidelines)
+            guidelines = _techStackDetector.BuildFallbackGuidelines(reviewable);
+
+        // 5. Review each file in sequence (avoids rate-limit bursts)
         var allResults = new List<FileReviewResult>();
 
         foreach (var file in reviewable)
@@ -109,13 +152,13 @@ public sealed class CodeReviewService : ICodeReviewService
             if (ct.IsCancellationRequested) break;
 
             var result = await _anthropic.ReviewFileAsync(
-                file, pr.Title, pr.Description, ct);
+                file, pr.Title, pr.Description, guidelines, ct);
 
             if (result is null) continue;
 
             allResults.Add(result);
 
-            // 5. Post inline comments for this file immediately
+            // 6. Post inline comments for this file immediately
             foreach (var comment in result.Comments)
             {
                 // Always override the file path with the canonical path from the diff.
@@ -149,7 +192,7 @@ public sealed class CodeReviewService : ICodeReviewService
             }
         }
 
-        // 6. Post overall summary comment
+        // 7. Post overall summary comment
         var totalComments = allResults.Sum(r => r.Comments.Count);
         var summaryText   = BuildSummaryComment(allResults, pr.Title, totalComments);
 

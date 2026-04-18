@@ -33,6 +33,17 @@ public interface IBitbucketService
         string markdownBody,
         CancellationToken ct = default);
 
+    /// <summary>
+    /// Fetches the raw content of a file from a repository branch.
+    /// Returns null if the file does not exist (404) or cannot be read.
+    /// </summary>
+    Task<string?> GetRepositoryFileAsync(
+        string workspace,
+        string repoSlug,
+        string branch,
+        string filePath,
+        CancellationToken ct = default);
+
     /// <summary>Lightweight connectivity check — returns true if the API token is valid.</summary>
     Task<bool> PingAsync(CancellationToken ct = default);
 }

@@ -59,13 +59,14 @@ public sealed class AnthropicService : IAnthropicService
         DiffFile file,
         string pullRequestTitle,
         string pullRequestDescription,
+        string? guidelines = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(file.RawDiff) || file.IsDeleted)
             return null;
 
         var promptTemplate = await LoadPromptTemplateAsync(ct);
-        var userMessage    = BuildUserMessage(promptTemplate, file, pullRequestTitle, pullRequestDescription);
+        var userMessage    = BuildUserMessage(promptTemplate, file, pullRequestTitle, pullRequestDescription, guidelines);
 
         var requestBody = new
         {
@@ -113,14 +114,20 @@ public sealed class AnthropicService : IAnthropicService
         string promptTemplate,
         DiffFile file,
         string prTitle,
-        string prDescription)
+        string prDescription,
+        string? guidelines)
     {
+        var guidelinesBlock = string.IsNullOrWhiteSpace(guidelines)
+            ? "(No CODE_REVIEW_GUIDELINES.md found in this repository — apply default review criteria only.)"
+            : guidelines.Trim();
+
         // Replace placeholders in the prompt template
         return promptTemplate
             .Replace("{{PR_TITLE}}", prTitle)
             .Replace("{{PR_DESCRIPTION}}", string.IsNullOrWhiteSpace(prDescription) ? "(none)" : prDescription)
             .Replace("{{FILE_PATH}}", file.FilePath)
-            .Replace("{{DIFF}}", file.RawDiff);
+            .Replace("{{DIFF}}", file.RawDiff)
+            .Replace("{{GUIDELINES}}", guidelinesBlock);
     }
 
     private FileReviewResult? ParseAnthropicResponse(string responseJson, string filePath)
