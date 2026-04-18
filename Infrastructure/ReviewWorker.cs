@@ -3,10 +3,8 @@ using BitbucketCodeReview.Services.Review;
 namespace BitbucketCodeReview.Infrastructure;
 
 /// <summary>
-/// Long-running BackgroundService that drains the <see cref="ReviewQueue"/>.
-/// Reviews are processed one at a time to avoid Anthropic rate-limit bursts.
-/// On graceful shutdown ASP.NET Core signals the CancellationToken which stops
-/// ReadAllAsync; in-flight reviews finish naturally.
+/// Drains the <see cref="ReviewQueue"/> sequentially to avoid Anthropic rate-limit bursts.
+/// Each review runs in its own DI scope so scoped services are disposed after every PR.
 /// </summary>
 public sealed class ReviewWorker : BackgroundService
 {
@@ -14,10 +12,7 @@ public sealed class ReviewWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ReviewWorker> _logger;
 
-    public ReviewWorker(
-        ReviewQueue queue,
-        IServiceScopeFactory scopeFactory,
-        ILogger<ReviewWorker> logger)
+    public ReviewWorker(ReviewQueue queue, IServiceScopeFactory scopeFactory, ILogger<ReviewWorker> logger)
     {
         _queue        = queue;
         _scopeFactory = scopeFactory;
@@ -31,13 +26,10 @@ public sealed class ReviewWorker : BackgroundService
         await foreach (var payload in _queue.ReadAllAsync(stoppingToken))
         {
             var prId = payload.PullRequest.Id;
-
             try
             {
-                _logger.LogInformation("Dequeued PR #{PrId} for review", prId);
-
-                using var scope = _scopeFactory.CreateScope();
-                var service = scope.ServiceProvider.GetRequiredService<ICodeReviewService>();
+                using var scope   = _scopeFactory.CreateScope();
+                var       service = scope.ServiceProvider.GetRequiredService<CodeReviewService>();
                 await service.ReviewPullRequestAsync(payload, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -47,7 +39,6 @@ public sealed class ReviewWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                // Log and continue — a single failure must not kill the worker
                 _logger.LogError(ex, "Review failed for PR #{PrId}", prId);
             }
         }

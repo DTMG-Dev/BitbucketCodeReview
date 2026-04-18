@@ -2,8 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace BitbucketCodeReview.Models.Bitbucket;
 
-// ─── Top-level webhook event ──────────────────────────────────────────────────
-
 public sealed class WebhookPayload
 {
     [JsonPropertyName("pullrequest")]
@@ -12,8 +10,6 @@ public sealed class WebhookPayload
     [JsonPropertyName("repository")]
     public Repository Repository { get; set; } = new();
 }
-
-// ─── Pull Request ─────────────────────────────────────────────────────────────
 
 public sealed class PullRequest
 {
@@ -60,22 +56,28 @@ public sealed class Commit
     public string Hash { get; set; } = string.Empty;
 }
 
-// ─── Repository ───────────────────────────────────────────────────────────────
-
 public sealed class Repository
 {
     [JsonPropertyName("full_name")]
     public string FullName { get; set; } = string.Empty;
 
-    /// <summary>Derived: everything before the first slash in FullName.</summary>
     [JsonIgnore]
-    public string Workspace => FullName.Contains('/')
-        ? FullName.Split('/')[0]
-        : string.Empty;
+    public string Workspace
+    {
+        get
+        {
+            var slash = FullName.IndexOf('/');
+            return slash >= 0 ? FullName[..slash] : string.Empty;
+        }
+    }
 
-    /// <summary>Derived: everything after the first slash in FullName.</summary>
     [JsonIgnore]
-    public string Slug => FullName.Contains('/')
-        ? FullName.Split('/')[1]
-        : FullName;
+    public string Slug
+    {
+        get
+        {
+            var slash = FullName.IndexOf('/');
+            return slash >= 0 ? FullName[(slash + 1)..] : FullName;
+        }
+    }
 }
